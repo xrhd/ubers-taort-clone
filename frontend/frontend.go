@@ -1,4 +1,4 @@
-// Service frontend serves the frontend for development purposes.
+// Service frontend serves the TAROT Configuration UI.
 package frontend
 
 import (

@@ -1,130 +1,115 @@
-# Event-Driven Architecture Starter
+# Uber TAROT Replica
 
-This is an event-driven microservices application using Pub/Sub for asynchronous communication between services.
+A replica of Uber's **TAROT (TARgeting and Observation Toolkit)** — an incentive targeting and optimization system — built with [encore.dev](https://encore.dev) and Go.
 
-The example in this starter is an Uptime Monitoring System that continuously monitors the uptime of a list of websites. 
+TAROT optimally allocates incentives (promotions, discounts, rewards) to users under budget constraints by modeling the problem as a **Multiple Knapsack Problem**.
 
-When it detects a website is down, it posts a Slack message notifying that the website is down, and another message when the website is back up again.
+## Architecture
 
-It has a react frontend and you can try a demo version [here](https://uptime.encore.build/).
+### System Overview
 
-[![Deploy to Encore](https://github.com/encoredev/examples/raw/main/assets/deploytoenc.svg)](https://app.encore.cloud/create-app/clone/uptime)
+```mermaid
+graph LR
+    BA["Business Associates"] -->|Configure Incentives| ConfigUI
 
-![Frontend](https://encore.dev/assets/tutorials/uptime/frontend.png)
-![Architecture](https://encore.dev/assets/tutorials/uptime/encore-flow.png)
+    subgraph ConfigUI["Configuration UI Tool<br/><i>ReactJS + NodeJS</i>"]
+    end
 
-## Build from scratch with a tutorial
+    subgraph Cron["Cron<br/><i>Golang + Cadence + Cassandra</i>"]
+    end
 
-If you prefer, check out the [tutorial](https://encore.dev/docs/go/tutorials/uptime) to learn how to build this application from scratch.
+    ConfigUI -->|"Incentives CRUD<br/><i>protobuf over gRPC</i>"| Orchestrator
+    Cron -->|"Periodic Trigger<br/><i>kafka</i>"| Orchestrator
 
-## Prerequisites 
+    subgraph Orchestrator["Orchestrator<br/><i>Golang Application</i>"]
+    end
 
-**Install Encore:**
-- **macOS:** `brew install encoredev/tap/encore`
-- **Linux:** `curl -L https://encore.dev/install.sh | bash`
-- **Windows:** `iwr https://encore.dev/install.ps1 | iex`
-  
-**Docker:**
-1. Install [Docker](https://docker.com)
-2. Start Docker
+    Orchestrator -->|"Usecase Store"| DB[("Docstore")]
 
-## Create app
+    Orchestrator -->|"Get users from cohorts<br/><i>protobuf over gRPC</i>"| Segmentation
+    Orchestrator -->|"GetPredictions<br/><i>kafka</i>"| MLGateway
+    Orchestrator -->|"Get Configured Budgets<br/><i>protobuf over gRPC</i>"| Budgeting
+    Orchestrator -->|"Get Remaining Budgets<br/><i>callstack</i>"| Pacer
+    Orchestrator -->|"Get Optimized Investments<br/><i>kafka</i>"| Optimizer
+    Orchestrator -->|"Assign Incentives<br/><i>kafka</i>"| Domain
 
-Create a local app from this template:
+    subgraph Segmentation["Segmentation Platform<br/><i>Spark + Blob Storage</i>"]
+    end
 
-```bash
-encore app create my-app-name --example=uptime
+    subgraph MLGateway["ML Gateway<br/><i>Spark + Cassandra</i>"]
+    end
+
+    subgraph Budgeting["Budgeting Platform<br/><i>Golang Application</i>"]
+    end
+
+    subgraph Pacer["Budget Pacer<br/><i>Golang Library</i>"]
+    end
+
+    subgraph Optimizer["Multi-lever Optimizer<br/><i>Ray + Uniflow</i>"]
+    end
+
+    subgraph Domain["Domain Services<br/><i>Golang Application</i>"]
+    end
 ```
 
-## Run app locally
+### Targeting Run Flow
 
-Before running your application, make sure you have Docker installed and running. Then run this command from your application's root folder:
+```mermaid
+sequenceDiagram
+    participant Cron
+    participant Orchestrator
+    participant Segmentation as Segmentation Platform
+    participant MLGateway as ML Gateway
+    participant Pacer
+    participant Optimizer
+    participant Domain as Domain Services
+
+    Cron->>Orchestrator: Trigger targeting run
+    Orchestrator->>Segmentation: Get all users
+    Orchestrator->>MLGateway: Get predictions
+    Orchestrator->>Pacer: Get all remaining budgets
+    Orchestrator->>Optimizer: Run optimizer for all opportunities
+    Orchestrator->>Domain: Assign incentives
+```
+
+### Services
+
+| Service | Description |
+|---|---|
+| `orchestrator` | Central coordinator — triggers and manages targeting runs |
+| `segmentation` | Defines and resolves user cohorts |
+| `mlgateway` | Serves ML predictions for incentive response |
+| `budgeting` | Manages configured budgets per program |
+| `pacer` | Tracks remaining budgets and pacing |
+| `optimizer` | Solves the multiple knapsack allocation |
+| `domain` | Assigns incentives to users |
+| `config` | CRUD API for incentive configuration |
+
+## Getting Started
+
+### Prerequisites
+
+- [Go 1.22+](https://go.dev/dl/)
+- [Encore CLI](https://encore.dev/docs/go/install) — `brew install encoredev/tap/encore`
+- [Docker](https://docker.com) (for local databases)
+
+### Run locally
 
 ```bash
 encore run
 ```
-To use the Slack integration, set the Slack Webhook URL (see tutorial above):
 
-```bash
-encore secret set --type local,dev,pr,prod SlackWebhookURL
-```
+Open the local dev dashboard at http://localhost:9400/
 
-**Note:** Cron Jobs do not execute when running locally.
-
-## View the frontend
-
-While `encore run` is running, head over to [http://localhost:4000/frontend/](http://localhost:4000/frontend/) to view the frontend for your uptime monitor.
-
-## Using the API
-
-Check if a given site is up (defaults to 'https://' if left out):
-```bash
-curl 'http://localhost:4000/ping/google.com'
-```
-
-Add a site to be automatically pinged every 1 hour:
-```bash
-curl 'http://localhost:4000/site' -d '{"url":"google.com"}'
-```
-
-Check all tracked sites immediately:
-```bash
-curl -X POST 'http://localhost:4000/check-all'
-```
-
-Get the current status of all tracked sites:
-```bash
-curl 'http://localhost:4000/status'
-```
-
-## Local Development Dashboard
-
-While `encore run` is running, open [http://localhost:9400/](http://localhost:9400/) to access Encore's [local developer dashboard](https://encore.dev/docs/go/observability/dev-dash).
-
-Here you can see traces for all requests you've made, see the application architecture diagram, and see API documentation in the Service Catalog.
-
-## Connecting to databases
-
-You can connect to your databases via psql shell:
-
-```bash
-encore db shell <database-name> --env=local --superuser
-```
-
-Learn more in the [CLI docs](https://encore.dev/docs/go/cli/cli-reference#database-management).
-
-## Deployment
-
-### Self-hosting
-
-See the [self-hosting instructions](https://encore.dev/docs/go/self-host/docker-build) for how to use `encore build docker` to create a Docker image and configure it.
-
-### Encore Cloud Platform
-
-Deploy your application to a free staging environment in Encore's development cloud using `git push encore`:
-
-```bash
-git add -A .
-git commit -m 'Commit message'
-git push encore
-```
-
-You can also open your app in the [Cloud Dashboard](https://app.encore.dev) to integrate with GitHub, or connect your AWS/GCP account, enabling Encore to automatically handle cloud deployments for you.
-
-## Link to GitHub
-
-Follow these steps to link your app to GitHub:
-
-1. Create a GitHub repo, commit and push the app.
-2. Open your app in the [Cloud Dashboard](https://app.encore.dev).
-3. Go to **Settings ➔ GitHub** and click on **Link app to GitHub** to link your app to GitHub and select the repo you just created.
-4. To configure Encore to automatically trigger deploys when you push to a specific branch name, go to the **Overview** page for your intended environment. Click on **Settings** and then in the section **Branch Push** configure the **Branch name** and hit **Save**.
-5. Commit and push a change to GitHub to trigger a deploy.
-
-[Learn more in the docs](https://encore.dev/docs/platform/integrations/github)
-
-## Testing
+### Run tests
 
 ```bash
 encore test ./...
 ```
+
+## References
+
+- [TAROT Paper (arXiv)](https://arxiv.org/abs/2407.19078)
+- [Solving Multiple Knapsack at Scale (Uber Blog)](https://www.uber.com/br/pt-br/blog/solving-multiple-knapsack/)
+- [Encore.dev Go Docs](https://encore.dev/docs/go)
+- [Encore Examples](https://github.com/encoredev/examples)
